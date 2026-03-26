@@ -8,16 +8,71 @@ use rayon::prelude::*;
 use tracing::{span, Level};
 
 use super::SimdBackend;
-use crate::core::channel::Blake2sChannelGeneric;
+use crate::core::channel::{Blake2sChannelGeneric, KeccakChannel};
 use crate::core::fields::m31::P;
 use crate::core::proof_of_work::GrindOps;
 use crate::core::vcs::blake2_hash::Blake2sHasherGeneric;
+use crate::core::vcs::keccak_hash::{KeccakHash, KeccakHasher};
 use crate::prover::backend::simd::blake2s::hash_16;
 use crate::prover::backend::simd::m31::{PackedM31, N_LANES};
 
 // Note: GRIND_LOW_BITS is a cap on how much extra time we need to wait for all threads to finish.
 // It must be <= 30 if we want to guarantee that the lowest 32 bits of the nonce are < 2^31 - 1.
 const GRIND_LOW_BITS: u32 = 20;
+
+impl GrindOps<KeccakChannel> for SimdBackend {
+    /// Outputs the smallest nonce of the form `(a << 32) | b`, where `0 <= a < 2^31 - 1` and
+    /// `0 <= b < 2^GRIND_LOW_BITS`.
+    fn grind(channel: &KeccakChannel, pow_bits: u32) -> u64 {
+        let _span = span!(Level::TRACE, "Simd Keccak Grind", class = "Keccak Grind");
+
+        // TODO(first): support more than 32 bits.
+        assert!(pow_bits <= 32, "pow_bits > 32 is not supported");
+        let digest = channel.digest();
+
+        // Compute the prefix digest H(POW_PREFIX, [0_u8; 24], digest, n_bits).
+        let mut hasher = KeccakHasher::default();
+        hasher.update(&KeccakChannel::POW_PREFIX.to_le_bytes());
+        hasher.update(&[0_u8; 24]);
+        hasher.update(&digest.0[..]);
+        hasher.update(&pow_bits.to_le_bytes());
+        let prefixed_digest = hasher.finalize();
+
+        #[cfg(not(feature = "parallel"))]
+        let res = (0..)
+            .find_map(|hi| grind_keccak(prefixed_digest, hi, pow_bits))
+            .expect("Grind failed to find a solution.");
+
+        #[cfg(feature = "parallel")]
+        let res = parallel_grind(prefixed_digest, pow_bits, grind_keccak);
+
+        assert!(
+            ((res >> 32) as u32) < P,
+            "The 32 high bits of the nonce are not reduced modulo the M31 prime."
+        );
+        assert!(
+            (res as u32) < P,
+            "The 32 low bits of the nonce are not reduced modulo the M31 prime."
+        );
+        res
+    }
+}
+
+fn grind_keccak(digest: KeccakHash, hi: u32, pow_bits: u32) -> Option<u64> {
+    let mut nonce = (hi as u64) << 32;
+    for low in 0..(1 << GRIND_LOW_BITS) {
+        let mut hasher = KeccakHasher::default();
+        hasher.update(digest.as_ref());
+        hasher.update(&nonce.to_le_bytes());
+        let res = hasher.finalize();
+        let n_zeros = u128::from_le_bytes(std::array::from_fn(|i| res.0[i])).trailing_zeros();
+        if n_zeros >= pow_bits {
+            return Some(nonce);
+        }
+        nonce = ((hi as u64) << 32) | (low as u64 + 1);
+    }
+    None
+}
 
 impl<const IS_M31_OUTPUT: bool> GrindOps<Blake2sChannelGeneric<IS_M31_OUTPUT>> for SimdBackend {
     /// Outputs the smallest nonce of the form `(a << 32) | b`, where `0 <= a < 2^31 - 1` and
@@ -194,7 +249,7 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::core::channel::{Blake2sChannel, Channel};
+    use crate::core::channel::{Blake2sChannel, Channel, KeccakChannel};
 
     #[cfg(all(feature = "parallel", feature = "slow-tests"))]
     #[test]
@@ -240,6 +295,11 @@ mod tests {
     #[test]
     fn test_grind_blake_is_deterministic() {
         test_grind_is_deterministic::<Blake2sChannel>();
+    }
+
+    #[test]
+    fn test_grind_keccak_is_deterministic() {
+        test_grind_is_deterministic::<KeccakChannel>();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
