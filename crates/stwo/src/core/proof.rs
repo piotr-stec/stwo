@@ -24,7 +24,7 @@ pub struct ExtendedStarkProof<H: MerkleHasherLifted> {
 
 impl<H: MerkleHasherLifted> StarkProof<H> {
     /// Extracts the composition trace Out-Of-Domain-Sample evaluation from the mask.
-    pub(crate) fn extract_composition_oods_eval(
+    pub fn extract_composition_oods_eval(
         &self,
         oods_point: CirclePoint<SecureField>,
         max_log_degree_bound: u32,

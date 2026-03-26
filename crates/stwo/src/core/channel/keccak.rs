@@ -247,4 +247,69 @@ mod tests {
         // Just verify it doesn't panic - actual verification depends on hash output
         assert!(result || !result); // Tautology to ensure test runs
     }
+
+    #[test]
+    fn test_keccak_channel_known_vectors() {
+        let mut channel = KeccakChannel::default();
+
+        let draw0 = channel.draw_u32s();
+        assert_eq!(
+            draw0,
+            vec![
+                704_766_614,
+                459_244_513,
+                475_191_447,
+                2_007_521_349,
+                3_177_025_465,
+                789_102_175,
+                3_930_552_170,
+                167_659_942,
+            ]
+        );
+
+        let draw1 = channel.draw_u32s();
+        assert_eq!(
+            draw1,
+            vec![
+                2_458_925_245,
+                2_528_194_765,
+                3_300_231_132,
+                4_288_850_010,
+                2_162_335_768,
+                4_079_801_769,
+                3_920_211_612,
+                676_166_186,
+            ]
+        );
+
+        let mut mix_u32s_channel = KeccakChannel::default();
+        mix_u32s_channel.mix_u32s(&[1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(
+            mix_u32s_channel.digest().0,
+            [
+                0x1f, 0xc4, 0x72, 0x11, 0x17, 0xdb, 0x54, 0x22, 0xb8, 0x4d, 0x79, 0x96, 0x90,
+                0xe2, 0xe4, 0x8b, 0xc8, 0x26, 0x6f, 0xfd, 0x74, 0x0a, 0x6b, 0xf5, 0xd5, 0x54,
+                0x7f, 0xdc, 0x49, 0x1c, 0x86, 0x8c,
+            ]
+        );
+
+        let mut mix_felts_channel = KeccakChannel::default();
+        let felts = [
+            SecureField::from_m31_array([m31!(11), m31!(22), m31!(33), m31!(44)]),
+            SecureField::from_m31_array([m31!(55), m31!(66), m31!(77), m31!(88)]),
+        ];
+        mix_felts_channel.mix_felts(&felts);
+        assert_eq!(
+            mix_felts_channel.digest().0,
+            [
+                0x65, 0x15, 0x67, 0x75, 0x50, 0x17, 0x77, 0x65, 0x75, 0x6e, 0xed, 0xe9, 0xc4,
+                0x4a, 0xc5, 0xc3, 0xed, 0xbb, 0xdf, 0xb3, 0xc5, 0xc7, 0x42, 0x6b, 0x70, 0x09,
+                0x26, 0xe6, 0x67, 0x6c, 0x6c, 0xb8,
+            ]
+        );
+
+        let pow_channel = KeccakChannel::default();
+        assert!(pow_channel.verify_pow_nonce(3, 12_345));
+        assert!(!pow_channel.verify_pow_nonce(4, 12_345));
+    }
 }

@@ -186,6 +186,10 @@ impl<E: FrameworkEval> FrameworkComponent<E> {
         &self.preprocessed_column_indices
     }
 
+    pub const fn info(&self) -> &InfoEvaluator {
+        &self.info
+    }
+
     pub const fn claimed_sum(&self) -> SecureField {
         self.claimed_sum
     }
